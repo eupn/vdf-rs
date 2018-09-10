@@ -61,3 +61,104 @@ pub mod vdf_mod_sqrt {
         x
     }
 }
+
+/// MiMC[1]-based VDF (see Vitalik Buterin's article that applies MiMC as VDF [2])
+///
+/// [1]: https://eprint.iacr.org/2016/492.pdf
+/// [2]: https://vitalik.ca/general/2018/07/21/starks_part_3.html
+pub mod vdf_mimc {
+    use rug::Integer;
+
+    /// Modulus of prime field 2^256 - 2^32 * 351 + 1
+    pub const MODULUS: &str = "115792089237316195423570985008687907853269984665640564039457584006405596119041";
+
+    /// An exponent to perform inverse of x^3 on prime field based on Fermat's Little Theorem
+    pub const L_FERMAT_EXPONENT: &str = "77194726158210796949047323339125271902179989777093709359638389337603730746027";
+
+    /// Calculates set of round constants to perform MiMC-calculation on.
+    fn calculate_round_constants() -> [u64; 64] {
+        let mut round_constants = [0u64; 64];
+        for i in 0usize..64 {
+            round_constants[i] = (i.pow(7) ^ 42) as u64;
+        }
+
+        round_constants
+    }
+
+    /// Executes `num_steps` of MiMC-calculation in forward direction for the given `input`
+    fn forward_mimc(num_steps: u64, input: &Integer) -> Integer {
+        let modulus = Integer::from_str_radix(MODULUS, 10).unwrap();
+        let round_constants = calculate_round_constants();
+
+        let mut result = input.clone();
+        let three = Integer::from(3);
+        for i in 1..num_steps {
+            result = (result.pow_mod(&three, &modulus).unwrap() +
+                            Integer::from(round_constants[i as usize % round_constants.len()])) % &modulus;
+        }
+
+        result
+    }
+
+    /// Executes `num_steps` of MiMC-calculation in backward direction for the given `input`.
+    ///
+    /// The properties of MiMC-scheme guarantees that calculation in backward direction is
+    /// always slower than in forward for correctly chosen parameters.
+    fn backward_mimc(num_steps: u64, input: &Integer) -> Integer {
+        let modulus = Integer::from_str_radix(MODULUS, 10).unwrap();
+        let l_fermat_exp = Integer::from_str_radix(L_FERMAT_EXPONENT, 10).unwrap();
+        let round_constants = calculate_round_constants();
+
+        let mut result = input.clone();
+        for i in (1..num_steps).rev() {
+            let round_constant = Integer::from(round_constants[i as usize % round_constants.len()]);
+            result = Integer::from(&result - &round_constant)
+                .pow_mod(&l_fermat_exp, &modulus).unwrap();
+        }
+
+        result
+    }
+
+    /// Performs an Eval() step of the MiMC-based VDF
+    pub fn eval(seed: &Integer, num_steps: u64) -> Integer {
+        let witness = backward_mimc(num_steps, &seed);
+
+        witness
+    }
+
+    /// Performs a Verify() step for the MiMC-based VDF result
+    pub fn verify(seed: &Integer, num_steps: u64, witness: &Integer) -> bool {
+        let result = forward_mimc(num_steps, witness);
+
+        result == *seed
+    }
+
+    #[cfg(test)]
+    mod tests {
+        extern crate elapsed;
+
+        use self::elapsed::measure_time;
+        use rug::Integer;
+        use ::vdf_mimc::*;
+
+        #[test]
+        fn test() {
+            const NUM_STEPS: u64 = 8192 * 512; // Approx. 1 min. on MBP 13"
+            let seed = Integer::from(3);
+
+            println!("Calculating MiMC VDF for input: {}", seed);
+
+            let (elapsed, witness) = measure_time(|| {
+                eval(&seed, NUM_STEPS)
+            });
+            println!("Result: {}, elapsed: {}", witness, elapsed);
+
+            println!("Calculating forward MiMC:");
+
+            let (elapsed, is_verified) = measure_time(|| {
+                verify(&seed, NUM_STEPS, &witness)
+            });
+            println!("Result: {}, elapsed: {}", is_verified, elapsed);
+        }
+    }
+}
