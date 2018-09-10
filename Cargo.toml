@@ -1,0 +1,9 @@
+[package]
+name = "vdf"
+description = "A crate with Verifiable Delay Functions (VDFs)"
+version = "0.0.1"
+authors = ["Eugene P. <eupn@protonmail.com>"]
+
+[dependencies]
+rug = "1.2.1"
+elapsed = "0.1.2"
